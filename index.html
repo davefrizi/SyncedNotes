@@ -247,6 +247,11 @@
             color: white;
         }
 
+        .status-local {
+            background: #9b59b6;
+            color: white;
+        }
+
         .note-info {
             text-align: center;
             margin-top: 15px;
@@ -268,6 +273,16 @@
 
         .share-url:hover {
             background: #e9ecef;
+        }
+
+        .sync-notice {
+            background: #e8f4fd;
+            border: 1px solid #bee5eb;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 12px;
+            color: #0c5460;
         }
 
         /* Mobile responsiveness */
@@ -323,7 +338,7 @@
     <!-- Setup Screen -->
     <div class="setup-container" id="setupContainer">
         <h2>🗒️ Cloud Sticky Notes</h2>
-        <p>Create a new note or open an existing one. Your notes sync across all devices automatically!</p>
+        <p>Create a new note or open an existing one. Your notes sync using GitHub Gists!</p>
         
         <div class="setup-buttons">
             <button class="btn btn-primary" onclick="createNewNote()">Create New Note</button>
@@ -335,8 +350,8 @@
                 type="text" 
                 class="note-id-input" 
                 id="noteIdInput" 
-                placeholder="Enter note ID (e.g., abc123)"
-                maxlength="20"
+                placeholder="Enter Gist ID (e.g., 1234567890abcdef)"
+                maxlength="32"
             >
             <div class="setup-buttons">
                 <button class="btn btn-primary" onclick="openExistingNote()">Open Note</button>
@@ -372,17 +387,22 @@
         <div class="share-url" id="shareUrl" onclick="copyShareUrl()" title="Click to copy">
             Click to copy shareable URL
         </div>
+        <div class="sync-notice">
+            <strong>💡 Cross-Device Sync:</strong> This note syncs automatically using GitHub Gists. 
+            Changes save every few seconds and sync across all devices with this URL.
+        </div>
         <small>Share this URL to access your note from any device</small>
     </div>
 
     <script>
         // Global variables
         let currentNoteId = null;
-        let binId = null;
+        let gistId = null;
         let saveTimeout = null;
         let syncInterval = null;
         let lastContent = '';
         let lastColor = '#feff9c';
+        let isUpdating = false;
 
         // DOM elements
         const setupContainer = document.getElementById('setupContainer');
@@ -394,16 +414,12 @@
         const shareUrl = document.getElementById('shareUrl');
         const colorDots = document.querySelectorAll('.color-dot');
 
-        // JSONBin API configuration
-        const JSONBIN_API_KEY = '$2a$10$VQJfZ8QVZ8QVZ8QVZ8QVZOeK3h4K3h4K3h4K3h4K3h4K3h4K3h4'; // Public demo key
-        const JSONBIN_BASE_URL = 'https://api.jsonbin.io/v3/b';
-
         // Setup functions
         function createNewNote() {
             currentNoteId = generateNoteId();
             updateUrl();
             showNote();
-            createBin();
+            createGist();
         }
 
         function showOpenExisting() {
@@ -418,6 +434,7 @@
         function openExistingNote() {
             const noteId = document.getElementById('noteIdInput').value.trim();
             if (noteId) {
+                gistId = noteId;
                 currentNoteId = noteId;
                 updateUrl();
                 showNote();
@@ -438,7 +455,7 @@
 
         // Utility functions
         function generateNoteId() {
-            return Math.random().toString(36).substring(2, 8);
+            return Date.now().toString(36) + Math.random().toString(36).substr(2);
         }
 
         function updateUrl() {
@@ -464,122 +481,118 @@
             statusIndicator.className = 'status-indicator status-' + status;
         }
 
-        // JSONBin API functions
-        async function createBin() {
+        // GitHub Gist API functions
+        async function createGist() {
             setStatus('saving', 'Creating...');
             
             const noteData = {
-                id: currentNoteId,
                 content: '',
                 color: '#feff9c',
                 lastModified: new Date().toISOString()
             };
 
+            const gistData = {
+                description: `Sticky Note - ${currentNoteId}`,
+                public: false,
+                files: {
+                    "sticky-note.json": {
+                        content: JSON.stringify(noteData, null, 2)
+                    }
+                }
+            };
+
             try {
-                const response = await fetch(JSONBIN_BASE_URL, {
+                const response = await fetch('https://api.github.com/gists', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-Master-Key': JSONBIN_API_KEY,
-                        'X-Bin-Name': 'sticky-note-' + currentNoteId
                     },
-                    body: JSON.stringify(noteData)
+                    body: JSON.stringify(gistData)
                 });
 
                 const result = await response.json();
                 
-                if (result.metadata && result.metadata.id) {
-                    binId = result.metadata.id;
+                if (result.id) {
+                    gistId = result.id;
+                    currentNoteId = result.id;
+                    currentNoteIdSpan.textContent = currentNoteId;
+                    updateUrl();
+                    updateShareUrl();
                     setStatus('synced', 'Ready');
                 } else {
                     throw new Error('Failed to create note');
                 }
             } catch (error) {
                 console.error('Error creating note:', error);
-                setStatus('error', 'Error');
+                setStatus('local', 'Local only');
                 // Fallback to local storage
-                binId = 'local-' + currentNoteId;
+                gistId = 'local-' + currentNoteId;
+                saveLocally();
             }
         }
 
         async function loadNote() {
             setStatus('saving', 'Loading...');
             
-            // First try to find existing bin
             try {
-                const searchResponse = await fetch(`https://api.jsonbin.io/v3/c/${JSONBIN_API_KEY}/bins`, {
-                    headers: {
-                        'X-Master-Key': JSONBIN_API_KEY
-                    }
-                });
+                const response = await fetch(`https://api.github.com/gists/${gistId}`);
+                const result = await response.json();
                 
-                const bins = await searchResponse.json();
-                const existingBin = bins.find(bin => bin.name === 'sticky-note-' + currentNoteId);
-                
-                if (existingBin) {
-                    binId = existingBin.id;
+                if (result.files && result.files['sticky-note.json']) {
+                    const noteData = JSON.parse(result.files['sticky-note.json'].content);
                     
-                    const response = await fetch(`${JSONBIN_BASE_URL}/${binId}/latest`, {
-                        headers: {
-                            'X-Master-Key': JSONBIN_API_KEY
-                        }
-                    });
+                    isUpdating = true;
+                    noteTextarea.value = noteData.content || '';
+                    lastContent = noteData.content || '';
                     
-                    const result = await response.json();
-                    
-                    if (result.record) {
-                        const noteData = result.record;
-                        noteTextarea.value = noteData.content || '';
-                        lastContent = noteData.content || '';
-                        
-                        if (noteData.color) {
-                            setNoteColor(noteData.color);
-                            lastColor = noteData.color;
-                        }
-                        
-                        setStatus('synced', 'Loaded');
+                    if (noteData.color) {
+                        setNoteColor(noteData.color);
+                        lastColor = noteData.color;
                     }
+                    isUpdating = false;
+                    
+                    setStatus('synced', 'Loaded');
                 } else {
-                    // Note doesn't exist, create it
-                    await createBin();
+                    throw new Error('Note not found');
                 }
             } catch (error) {
                 console.error('Error loading note:', error);
-                setStatus('error', 'Not found');
-                // Create new note instead
-                await createBin();
+                setStatus('local', 'Local only');
+                loadLocally();
             }
         }
 
         async function saveNote() {
-            if (!binId || binId.startsWith('local-')) {
-                // Save to localStorage as fallback
-                const noteData = {
-                    content: noteTextarea.value,
-                    color: getActiveColor()
-                };
-                localStorage.setItem('note-' + currentNoteId, JSON.stringify(noteData));
-                setStatus('synced', 'Saved locally');
+            if (!gistId || gistId.startsWith('local-')) {
+                saveLocally();
                 return;
             }
+
+            if (isUpdating) return; // Don't save while updating from server
 
             setStatus('saving', 'Saving...');
 
             const noteData = {
-                id: currentNoteId,
                 content: noteTextarea.value,
                 color: getActiveColor(),
                 lastModified: new Date().toISOString()
             };
 
+            const gistData = {
+                files: {
+                    "sticky-note.json": {
+                        content: JSON.stringify(noteData, null, 2)
+                    }
+                }
+            };
+
             try {
-                const response = await fetch(`${JSONBIN_BASE_URL}/${binId}`, {
-                    method: 'PUT',
+                const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                    method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-Master-Key': JSONBIN_API_KEY
                     },
-                    body: JSON.stringify(noteData)
+                    body: JSON.stringify(gistData)
                 });
 
                 if (response.ok) {
@@ -591,31 +604,29 @@
                 }
             } catch (error) {
                 console.error('Error saving note:', error);
-                setStatus('error', 'Save failed');
+                setStatus('local', 'Local only');
+                saveLocally();
             }
         }
 
         async function syncNote() {
-            if (!binId || binId.startsWith('local-')) return;
+            if (!gistId || gistId.startsWith('local-') || isUpdating) return;
 
             try {
-                const response = await fetch(`${JSONBIN_BASE_URL}/${binId}/latest`, {
-                    headers: {
-                        'X-Master-Key': JSONBIN_API_KEY
-                    }
-                });
-
+                const response = await fetch(`https://api.github.com/gists/${gistId}`);
                 const result = await response.json();
                 
-                if (result.record) {
-                    const noteData = result.record;
+                if (result.files && result.files['sticky-note.json']) {
+                    const noteData = JSON.parse(result.files['sticky-note.json'].content);
                     
                     // Only update if content changed from another device
                     if (noteData.content !== lastContent || noteData.color !== lastColor) {
+                        isUpdating = true;
                         noteTextarea.value = noteData.content || '';
                         setNoteColor(noteData.color || '#feff9c');
                         lastContent = noteData.content || '';
                         lastColor = noteData.color || '#feff9c';
+                        isUpdating = false;
                     }
                 }
             } catch (error) {
@@ -623,9 +634,31 @@
             }
         }
 
+        function saveLocally() {
+            const noteData = {
+                content: noteTextarea.value,
+                color: getActiveColor(),
+                lastModified: new Date().toISOString()
+            };
+            localStorage.setItem('note-' + currentNoteId, JSON.stringify(noteData));
+            setStatus('local', 'Saved locally');
+        }
+
+        function loadLocally() {
+            const saved = localStorage.getItem('note-' + currentNoteId);
+            if (saved) {
+                const noteData = JSON.parse(saved);
+                noteTextarea.value = noteData.content || '';
+                setNoteColor(noteData.color || '#feff9c');
+                lastContent = noteData.content || '';
+                lastColor = noteData.color || '#feff9c';
+                setStatus('local', 'Local only');
+            }
+        }
+
         function startSyncing() {
-            // Sync every 3 seconds
-            syncInterval = setInterval(syncNote, 3000);
+            // Sync every 5 seconds (GitHub API has rate limits)
+            syncInterval = setInterval(syncNote, 5000);
         }
 
         function stopSyncing() {
@@ -655,6 +688,8 @@
         // Event listeners
         colorDots.forEach(dot => {
             dot.addEventListener('click', function() {
+                if (isUpdating) return;
+                
                 colorDots.forEach(d => d.classList.remove('active'));
                 this.classList.add('active');
                 
@@ -668,8 +703,10 @@
         });
 
         noteTextarea.addEventListener('input', function() {
+            if (isUpdating) return;
+            
             clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveNote, 1000); // Save 1 second after typing stops
+            saveTimeout = setTimeout(saveNote, 2000); // Save 2 seconds after typing stops
         });
 
         // Initialize
@@ -677,6 +714,7 @@
             // Check if there's a note ID in the URL
             const urlHash = window.location.hash.substring(1);
             if (urlHash) {
+                gistId = urlHash;
                 currentNoteId = urlHash;
                 showNote();
                 loadNote();
@@ -693,7 +731,9 @@
             if (saveTimeout) {
                 clearTimeout(saveTimeout);
                 // Try to save immediately on page unload
-                saveNote();
+                if (!isUpdating) {
+                    saveNote();
+                }
             }
         });
 
@@ -701,7 +741,7 @@
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) {
                 stopSyncing();
-            } else if (currentNoteId && binId) {
+            } else if (currentNoteId && gistId && !gistId.startsWith('local-')) {
                 startSyncing();
                 syncNote(); // Sync immediately when returning
             }
