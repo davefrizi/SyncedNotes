@@ -124,9 +124,9 @@
             background-image: 
                 repeating-linear-gradient(
                     transparent,
-                    transparent 23px,
-                    rgba(0,0,0,0.05) 24px,
-                    rgba(0,0,0,0.05) 25px
+                    transparent 25px,
+                    rgba(0,0,0,0.05) 26px,
+                    rgba(0,0,0,0.05) 27px
                 );
             pointer-events: none;
             z-index: 1;
@@ -147,6 +147,7 @@
             .note-textarea {
                 font-size: 14px;
                 min-height: 190px;
+                line-height: 1.8;
             }
             
             .color-picker {
@@ -157,6 +158,17 @@
             .color-dot {
                 width: 18px;
                 height: 18px;
+            }
+
+            /* Adjust lines for mobile */
+            .note-content::after {
+                background-image: 
+                    repeating-linear-gradient(
+                        transparent,
+                        transparent 23px,
+                        rgba(0,0,0,0.05) 24px,
+                        rgba(0,0,0,0.05) 25px
+                    );
             }
         }
     </style>
@@ -199,18 +211,47 @@
                 stickyNote.style.background = newColor;
                 
                 // Save color preference
-                localStorage.setItem('stickyNoteColor', newColor);
-                localStorage.setItem('activeColorClass', this.className);
+                saveToCloud();
             });
         });
 
-        // Auto-save note content
-        textarea.addEventListener('input', function() {
-            localStorage.setItem('stickyNoteContent', this.value);
-        });
+        // Cloud storage simulation using URL hash
+        function saveToCloud() {
+            const data = {
+                content: textarea.value,
+                color: getActiveColor(),
+                colorClass: getActiveColorClass()
+            };
+            
+            // Encode data and save to URL hash for cross-device access
+            const encoded = btoa(JSON.stringify(data));
+            window.location.hash = encoded;
+            
+            // Also save locally as backup
+            localStorage.setItem('stickyNoteContent', textarea.value);
+            localStorage.setItem('stickyNoteColor', data.color);
+            localStorage.setItem('activeColorClass', data.colorClass);
+        }
 
-        // Load saved preferences on page load
-        window.addEventListener('load', function() {
+        function loadFromCloud() {
+            // Try to load from URL hash first (cross-device)
+            if (window.location.hash) {
+                try {
+                    const encoded = window.location.hash.substring(1);
+                    const data = JSON.parse(atob(encoded));
+                    
+                    textarea.value = data.content || '';
+                    if (data.color && data.colorClass) {
+                        stickyNote.style.background = data.color;
+                        setActiveColor(data.colorClass);
+                    }
+                    return;
+                } catch (e) {
+                    console.log('Could not load from URL, trying local storage');
+                }
+            }
+            
+            // Fallback to local storage
             const savedContent = localStorage.getItem('stickyNoteContent');
             const savedColor = localStorage.getItem('stickyNoteColor');
             const savedColorClass = localStorage.getItem('activeColorClass');
@@ -221,14 +262,38 @@
             
             if (savedColor && savedColorClass) {
                 stickyNote.style.background = savedColor;
-                colorDots.forEach(dot => {
-                    dot.classList.remove('active');
-                    if (dot.className === savedColorClass) {
-                        dot.classList.add('active');
-                    }
-                });
+                setActiveColor(savedColorClass);
             }
+        }
+
+        function getActiveColor() {
+            const activeDot = document.querySelector('.color-dot.active');
+            return activeDot ? activeDot.getAttribute('data-color') : '#feff9c';
+        }
+
+        function getActiveColorClass() {
+            const activeDot = document.querySelector('.color-dot.active');
+            return activeDot ? activeDot.className : 'color-dot yellow active';
+        }
+
+        function setActiveColor(className) {
+            colorDots.forEach(dot => {
+                dot.classList.remove('active');
+                if (dot.className === className) {
+                    dot.classList.add('active');
+                }
+            });
+        }
+
+        // Auto-save note content with debouncing
+        let saveTimeout;
+        textarea.addEventListener('input', function() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveToCloud, 1000); // Save 1 second after typing stops
         });
+
+        // Load saved preferences on page load
+        window.addEventListener('load', loadFromCloud);
 
         // Add slight random rotation for more natural look
         const randomRotation = (Math.random() - 0.5) * 4; // -2 to 2 degrees
