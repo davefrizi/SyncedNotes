@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Real-Time Sticky Notes</title>
     <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.3/dist/umd/supabase.js"></script>
     <style>
         * {
             margin: 0;
@@ -424,8 +424,7 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvYWRvcXR4eWtpZXJqcnhjaWNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg2MjYwOTYsImV4cCI6MjA2NDIwMjA5Nn0.rnzEAP7k2GSktUPhh7My5E_DjdgRPzVa5xYA5Ivz7cY';
         
         // Initialize Supabase client
-        const { createClient } = supabase;
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         // Global variables
         let currentNoteId = null;
@@ -530,13 +529,17 @@
                     .insert([noteData])
                     .select();
 
-                if (error) throw error;
+                if (error) {
+                    console.error('Insert error:', error);
+                    throw error;
+                }
 
+                console.log('Note created:', data);
                 setStatus('live', 'Live');
                 setConnectionStatus(true);
             } catch (error) {
                 console.error('Error creating note:', error);
-                setStatus('error', 'Error');
+                setStatus('error', 'Create failed');
                 setConnectionStatus(false);
             }
         }
@@ -590,37 +593,51 @@
 
                 const { error } = await supabaseClient
                     .from('notes')
-                    .update(noteData)
-                    .eq('id', currentNoteId);
+                    .upsert({
+                        id: currentNoteId,
+                        ...noteData
+                    });
 
-                if (error) throw error;
+                if (error) {
+                    console.error('Save error:', error);
+                    throw error;
+                }
 
                 setStatus('live', 'Live');
             } catch (error) {
                 console.error('Error saving note:', error);
                 setStatus('error', 'Save failed');
+                
+                // Fallback to localStorage
+                localStorage.setItem('note-' + currentNoteId, JSON.stringify({
+                    content: noteTextarea.value,
+                    color: getActiveColor()
+                }));
             }
         }
 
         function setupRealtimeSync() {
             // Set up real-time subscription
             realtimeChannel = supabaseClient
-                .channel(`note-${currentNoteId}`)
+                .channel(`public:notes:id=eq.${currentNoteId}`)
                 .on('postgres_changes', {
                     event: '*',
                     schema: 'public',
                     table: 'notes',
                     filter: `id=eq.${currentNoteId}`
                 }, (payload) => {
+                    console.log('Received real-time update:', payload);
                     if (payload.new && payload.new.id === currentNoteId) {
                         handleRealtimeUpdate(payload.new);
                     }
                 })
                 .subscribe((status) => {
+                    console.log('Realtime status:', status);
                     if (status === 'SUBSCRIBED') {
                         setStatus('live', 'Live');
                         setConnectionStatus(true);
-                    } else if (status === 'CHANNEL_ERROR') {
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        setStatus('error', 'Connection failed');
                         setConnectionStatus(false);
                     }
                 });
