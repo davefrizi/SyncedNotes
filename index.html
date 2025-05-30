@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Real-Time Sticky Notes</title>
     <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@supabase/supabase-js@2.39.3/dist/umd/supabase.js"></script>
     <style>
         * {
             margin: 0;
@@ -248,16 +247,9 @@
             color: white;
         }
 
-        .status-live {
+        .status-local {
             background: #9b59b6;
             color: white;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
         }
 
         .note-info {
@@ -284,28 +276,13 @@
         }
 
         .sync-notice {
-            background: #e8f5e8;
-            border: 1px solid #c3e6c3;
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
             border-radius: 5px;
             padding: 10px;
             margin: 10px 0;
             font-size: 12px;
-            color: #2d5a2d;
-        }
-
-        .connection-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #2ecc71;
-            z-index: 10;
-        }
-
-        .connection-indicator.disconnected {
-            background: #e74c3c;
+            color: #856404;
         }
 
         /* Mobile responsiveness */
@@ -360,8 +337,8 @@
 <body>
     <!-- Setup Screen -->
     <div class="setup-container" id="setupContainer">
-        <h2>🗒️ Real-Time Sticky Notes</h2>
-        <p>Create a new note or open an existing one. Your notes sync across all devices in real-time using Supabase!</p>
+        <h2>🗒️ Cross-Device Sticky Notes</h2>
+        <p>Create a new note or open an existing one. Notes sync automatically using a simple polling system!</p>
         
         <div class="setup-buttons">
             <button class="btn btn-primary" onclick="createNewNote()">Create New Note</button>
@@ -386,7 +363,6 @@
     <!-- Sticky Note -->
     <div class="sticky-note" id="stickyNote">
         <div class="status-indicator" id="statusIndicator">Ready</div>
-        <div class="connection-indicator" id="connectionIndicator"></div>
         
         <div class="color-picker">
             <div class="color-dot yellow active" data-color="#feff9c"></div>
@@ -412,32 +388,30 @@
             Click to copy shareable URL
         </div>
         <div class="sync-notice">
-            <strong>🔄 Real-Time Sync:</strong> This note syncs automatically across all devices. 
-            Changes appear instantly on all devices with this URL. The green dot shows connection status.
+            <strong>🔄 Sync Method:</strong> This note syncs across devices using periodic database checks. 
+            Changes will appear on other devices within a few seconds.
         </div>
-        <small>Share this URL to collaborate in real-time</small>
+        <small>Share this URL to collaborate across devices</small>
     </div>
 
     <script>
         // Supabase configuration
         const SUPABASE_URL = 'https://boardoqtxykirjrxcick.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvYWRvcXR4eWtpZXJqcnhjaWNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg2MjYwOTYsImV4cCI6MjA2NDIwMjA5Nn0.rnzEAP7k2GSktUPhh7My5E_DjdgRPzVa5xYA5Ivz7cY';
-        
-        // Initialize Supabase client
-        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         // Global variables
         let currentNoteId = null;
         let saveTimeout = null;
-        let realtimeChannel = null;
+        let syncInterval = null;
         let isUpdatingFromRemote = false;
+        let lastKnownContent = '';
+        let lastKnownColor = '#feff9c';
 
         // DOM elements
         const setupContainer = document.getElementById('setupContainer');
         const stickyNote = document.getElementById('stickyNote');
         const noteTextarea = document.getElementById('noteTextarea');
         const statusIndicator = document.getElementById('statusIndicator');
-        const connectionIndicator = document.getElementById('connectionIndicator');
         const noteInfo = document.getElementById('noteInfo');
         const currentNoteIdSpan = document.getElementById('currentNoteId');
         const shareUrl = document.getElementById('shareUrl');
@@ -477,8 +451,8 @@
             currentNoteIdSpan.textContent = currentNoteId;
             updateShareUrl();
             
-            // Start real-time syncing
-            setupRealtimeSync();
+            // Start simple polling sync
+            startPollingSync();
         }
 
         // Utility functions
@@ -509,38 +483,38 @@
             statusIndicator.className = 'status-indicator status-' + status;
         }
 
-        function setConnectionStatus(connected) {
-            connectionIndicator.className = 'connection-indicator ' + (connected ? '' : 'disconnected');
-        }
-
-        // Database functions
+        // Simple database functions using fetch API
         async function createNoteInDatabase() {
             setStatus('saving', 'Creating...');
             
             try {
-                const noteData = {
-                    id: currentNoteId,
-                    content: '',
-                    color: '#feff9c'
-                };
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                        id: currentNoteId,
+                        content: '',
+                        color: '#feff9c'
+                    })
+                });
 
-                const { data, error } = await supabaseClient
-                    .from('notes')
-                    .insert([noteData])
-                    .select();
-
-                if (error) {
-                    console.error('Insert error:', error);
-                    throw error;
+                if (response.ok) {
+                    setStatus('synced', 'Created');
+                    lastKnownContent = '';
+                    lastKnownColor = '#feff9c';
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
                 }
-
-                console.log('Note created:', data);
-                setStatus('live', 'Live');
-                setConnectionStatus(true);
             } catch (error) {
                 console.error('Error creating note:', error);
-                setStatus('error', 'Create failed');
-                setConnectionStatus(false);
+                setStatus('local', 'Local only');
+                // Save locally as fallback
+                saveToLocal();
             }
         }
 
@@ -548,34 +522,36 @@
             setStatus('saving', 'Loading...');
             
             try {
-                const { data, error } = await supabaseClient
-                    .from('notes')
-                    .select('*')
-                    .eq('id', currentNoteId)
-                    .single();
-
-                if (error) {
-                    if (error.code === 'PGRST116') {
-                        // Note doesn't exist, create it
-                        await createNoteInDatabase();
-                        return;
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}&select=*`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
                     }
-                    throw error;
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
                 }
 
-                if (data) {
+                const data = await response.json();
+                
+                if (data && data.length > 0) {
+                    const noteData = data[0];
                     isUpdatingFromRemote = true;
-                    noteTextarea.value = data.content || '';
-                    setNoteColor(data.color || '#feff9c');
+                    noteTextarea.value = noteData.content || '';
+                    setNoteColor(noteData.color || '#feff9c');
+                    lastKnownContent = noteData.content || '';
+                    lastKnownColor = noteData.color || '#feff9c';
                     isUpdatingFromRemote = false;
+                    setStatus('synced', 'Loaded');
+                } else {
+                    // Note doesn't exist, create it
+                    await createNoteInDatabase();
                 }
-
-                setStatus('live', 'Live');
-                setConnectionStatus(true);
             } catch (error) {
                 console.error('Error loading note:', error);
-                setStatus('error', 'Error');
-                setConnectionStatus(false);
+                setStatus('local', 'Local only');
+                loadFromLocal();
             }
         }
 
@@ -585,78 +561,102 @@
             setStatus('saving', 'Saving...');
             
             try {
-                const noteData = {
-                    content: noteTextarea.value,
-                    color: getActiveColor(),
-                    updated_at: new Date().toISOString()
-                };
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        content: noteTextarea.value,
+                        color: getActiveColor(),
+                        updated_at: new Date().toISOString()
+                    })
+                });
 
-                const { error } = await supabaseClient
-                    .from('notes')
-                    .upsert({
-                        id: currentNoteId,
-                        ...noteData
-                    });
-
-                if (error) {
-                    console.error('Save error:', error);
-                    throw error;
+                if (response.ok) {
+                    setStatus('synced', 'Saved');
+                    lastKnownContent = noteTextarea.value;
+                    lastKnownColor = getActiveColor();
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
                 }
-
-                setStatus('live', 'Live');
             } catch (error) {
                 console.error('Error saving note:', error);
-                setStatus('error', 'Save failed');
-                
-                // Fallback to localStorage
-                localStorage.setItem('note-' + currentNoteId, JSON.stringify({
-                    content: noteTextarea.value,
-                    color: getActiveColor()
-                }));
+                setStatus('local', 'Local only');
+                saveToLocal();
             }
         }
 
-        function setupRealtimeSync() {
-            // Set up real-time subscription
-            realtimeChannel = supabaseClient
-                .channel(`public:notes:id=eq.${currentNoteId}`)
-                .on('postgres_changes', {
-                    event: '*',
-                    schema: 'public',
-                    table: 'notes',
-                    filter: `id=eq.${currentNoteId}`
-                }, (payload) => {
-                    console.log('Received real-time update:', payload);
-                    if (payload.new && payload.new.id === currentNoteId) {
-                        handleRealtimeUpdate(payload.new);
-                    }
-                })
-                .subscribe((status) => {
-                    console.log('Realtime status:', status);
-                    if (status === 'SUBSCRIBED') {
-                        setStatus('live', 'Live');
-                        setConnectionStatus(true);
-                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        setStatus('error', 'Connection failed');
-                        setConnectionStatus(false);
+        async function checkForUpdates() {
+            if (isUpdatingFromRemote) return;
+            
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}&select=content,color,updated_at`, {
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
                     }
                 });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.length > 0) {
+                        const noteData = data[0];
+                        
+                        // Check if content has changed
+                        if (noteData.content !== lastKnownContent || noteData.color !== lastKnownColor) {
+                            isUpdatingFromRemote = true;
+                            noteTextarea.value = noteData.content || '';
+                            setNoteColor(noteData.color || '#feff9c');
+                            lastKnownContent = noteData.content || '';
+                            lastKnownColor = noteData.color || '#feff9c';
+                            isUpdatingFromRemote = false;
+                            
+                            // Show brief update indicator
+                            setStatus('synced', 'Updated');
+                            setTimeout(() => setStatus('synced', 'Synced'), 1000);
+                        }
+                    }
+                }
+            } catch (error) {
+                // Ignore sync errors, just keep working locally
+                console.log('Sync check failed:', error);
+            }
         }
 
-        function handleRealtimeUpdate(data) {
-            // Don't update if this change came from this device
-            if (data.content === noteTextarea.value && data.color === getActiveColor()) {
-                return;
-            }
+        function startPollingSync() {
+            // Check for updates every 3 seconds
+            syncInterval = setInterval(checkForUpdates, 3000);
+        }
 
-            isUpdatingFromRemote = true;
-            noteTextarea.value = data.content || '';
-            setNoteColor(data.color || '#feff9c');
-            isUpdatingFromRemote = false;
-            
-            // Flash the status to show update received
-            setStatus('synced', 'Updated');
-            setTimeout(() => setStatus('live', 'Live'), 1000);
+        function stopPollingSync() {
+            if (syncInterval) {
+                clearInterval(syncInterval);
+                syncInterval = null;
+            }
+        }
+
+        // Local storage fallback
+        function saveToLocal() {
+            const noteData = {
+                content: noteTextarea.value,
+                color: getActiveColor(),
+                updated_at: new Date().toISOString()
+            };
+            localStorage.setItem('note-' + currentNoteId, JSON.stringify(noteData));
+        }
+
+        function loadFromLocal() {
+            const saved = localStorage.getItem('note-' + currentNoteId);
+            if (saved) {
+                const noteData = JSON.parse(saved);
+                noteTextarea.value = noteData.content || '';
+                setNoteColor(noteData.color || '#feff9c');
+                lastKnownContent = noteData.content || '';
+                lastKnownColor = noteData.color || '#feff9c';
+            }
         }
 
         // Color functions
@@ -689,7 +689,7 @@
                 
                 // Save immediately when color changes
                 clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(saveNoteToDatabase, 300);
+                saveTimeout = setTimeout(saveNoteToDatabase, 500);
             });
         });
 
@@ -697,7 +697,7 @@
             if (isUpdatingFromRemote) return;
             
             clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveNoteToDatabase, 1000); // Save 1 second after typing stops
+            saveTimeout = setTimeout(saveNoteToDatabase, 1500); // Save 1.5 seconds after typing stops
         });
 
         // Initialize
@@ -717,17 +717,20 @@
 
         // Handle page unload
         window.addEventListener('beforeunload', function() {
-            if (realtimeChannel) {
-                supabaseClient.removeChannel(realtimeChannel);
+            stopPollingSync();
+            // Save immediately before leaving
+            if (currentNoteId && !isUpdatingFromRemote) {
+                saveToLocal();
             }
         });
 
         // Handle visibility change
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) {
-                setConnectionStatus(false);
-            } else if (currentNoteId && realtimeChannel) {
-                setConnectionStatus(true);
+                stopPollingSync();
+            } else if (currentNoteId) {
+                startPollingSync();
+                checkForUpdates(); // Check immediately when returning
             }
         });
     </script>
