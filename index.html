@@ -485,13 +485,6 @@
         
         // Initialize Supabase client
         let supabaseClient = null;
-        
-        try {
-            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            addDebugLog('Supabase client initialized successfully');
-        } catch (error) {
-            addDebugLog(`Supabase init failed: ${error.message}`);
-        }
 
         // Global variables
         let currentNoteId = null;
@@ -500,6 +493,7 @@
         let lastKnownContent = '';
         let lastKnownColor = '#feff9c';
         let hasUnsavedChanges = false;
+        let supabaseClient = null;
 
         // DOM elements
         const setupContainer = document.getElementById('setupContainer');
@@ -515,10 +509,16 @@
 
         // Debug logging
         function addDebugLog(message) {
-            const timestamp = new Date().toLocaleTimeString();
-            debugLog.innerHTML += `<br>[${timestamp}] ${message}`;
-            debugLog.scrollTop = debugLog.scrollHeight;
-            console.log(`[DEBUG] ${message}`);
+            try {
+                const timestamp = new Date().toLocaleTimeString();
+                if (debugLog) {
+                    debugLog.innerHTML += `<br>[${timestamp}] ${message}`;
+                    debugLog.scrollTop = debugLog.scrollHeight;
+                }
+                console.log(`[DEBUG] ${message}`);
+            } catch (error) {
+                console.log(`[DEBUG] ${message}`);
+            }
         }
 
         // Setup functions
@@ -614,19 +614,63 @@
         }
 
         // Database functions using Supabase SDK
+        async function testSupabaseConnection() {
+            if (!supabaseClient) {
+                addDebugLog('❌ No Supabase client available');
+                return false;
+            }
+            
+            try {
+                addDebugLog('🔍 Testing Supabase connection...');
+                
+                // Try a simple select to test connection
+                const { data, error } = await supabaseClient
+                    .from('notes')
+                    .select('count(*)')
+                    .limit(1);
+
+                if (error) {
+                    addDebugLog(`❌ Connection test failed: ${error.message}`);
+                    if (error.message.includes('JWT')) {
+                        addDebugLog('🔐 This looks like an authentication issue');
+                    } else if (error.message.includes('CORS')) {
+                        addDebugLog('🌐 This is a CORS issue');
+                    } else if (error.message.includes('policy')) {
+                        addDebugLog('🛡️ This is an RLS policy issue');
+                    }
+                    return false;
+                } else {
+                    addDebugLog('✅ Supabase connection successful!');
+                    return true;
+                }
+            } catch (error) {
+                addDebugLog(`❌ Connection test error: ${error.message}`);
+                return false;
+            }
+        }
+
         async function createNoteInDatabase() {
             setStatus('saving', 'Creating...');
             setSaveButtonState('saving');
             
             if (!supabaseClient) {
-                addDebugLog('No Supabase client available');
+                addDebugLog('❌ No Supabase client available');
                 setStatus('local', 'Local only');
                 setSaveButtonState('error');
                 return;
             }
             
+            // Test connection first
+            const connectionOk = await testSupabaseConnection();
+            if (!connectionOk) {
+                setStatus('local', 'Local only');
+                setSaveButtonState('error');
+                saveToLocal();
+                return;
+            }
+            
             try {
-                addDebugLog('Creating note with Supabase SDK...');
+                addDebugLog('📝 Creating note with Supabase SDK...');
                 
                 const { data, error } = await supabaseClient
                     .from('notes')
@@ -638,18 +682,18 @@
                     .select();
 
                 if (error) {
-                    addDebugLog(`Supabase error: ${error.message}`);
+                    addDebugLog(`❌ Supabase error: ${error.message}`);
                     throw error;
                 }
 
-                addDebugLog('Note created successfully with SDK');
+                addDebugLog('✅ Note created successfully with SDK');
                 setStatus('synced', 'Created');
                 setSaveButtonState('success');
                 lastKnownContent = '';
                 lastKnownColor = '#feff9c';
                 hasUnsavedChanges = false;
             } catch (error) {
-                addDebugLog(`Create failed: ${error.message}`);
+                addDebugLog(`❌ Create failed: ${error.message}`);
                 setStatus('local', 'Local only');
                 setSaveButtonState('error');
                 saveToLocal(); // Fallback to local storage
@@ -869,6 +913,19 @@
         // Initialize
         window.addEventListener('load', function() {
             addDebugLog('Application started');
+            
+            // Test Supabase SDK availability
+            if (typeof window.supabase !== 'undefined') {
+                addDebugLog('Supabase SDK loaded successfully');
+                try {
+                    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                    addDebugLog('Supabase client initialized successfully');
+                } catch (error) {
+                    addDebugLog(`Supabase init failed: ${error.message}`);
+                }
+            } else {
+                addDebugLog('ERROR: Supabase SDK not loaded!');
+            }
             
             // Check if there's a note ID in the URL
             const urlHash = window.location.hash.substring(1);
