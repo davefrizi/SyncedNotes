@@ -475,10 +475,23 @@
         </div>
     </div>
 
+    <!-- Load Supabase SDK -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
+    
     <script>
         // Supabase configuration
         const SUPABASE_URL = 'https://boardoqtxykirjrxcick.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvYWRvcXR4eWtpZXJqcnhjaWNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg2MjYwOTYsImV4cCI6MjA2NDIwMjA5Nn0.rnzEAP7k2GSktUPhh7My5E_DjdgRPzVa5xYA5Ivz7cY';
+        
+        // Initialize Supabase client
+        let supabaseClient = null;
+        
+        try {
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            addDebugLog('Supabase client initialized successfully');
+        } catch (error) {
+            addDebugLog(`Supabase init failed: ${error.message}`);
+        }
 
         // Global variables
         let currentNoteId = null;
@@ -600,64 +613,36 @@
             }
         }
 
-        // Database functions with better error handling
-        async function makeSupabaseRequest(endpoint, options = {}) {
-            const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
-            const headers = {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'Content-Type': 'application/json',
-                ...options.headers
-            };
-
-            addDebugLog(`Making request to: ${endpoint}`);
-            
-            try {
-                const response = await fetch(url, {
-                    ...options,
-                    headers,
-                    mode: 'cors' // Explicitly set CORS mode
-                });
-
-                addDebugLog(`Response status: ${response.status}`);
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    addDebugLog(`Error response: ${errorText}`);
-                    throw new Error(`HTTP ${response.status}: ${errorText}`);
-                }
-
-                if (response.status === 204) {
-                    return null; // No content
-                }
-
-                const data = await response.json();
-                addDebugLog(`Response data: ${JSON.stringify(data).substring(0, 100)}...`);
-                return data;
-            } catch (error) {
-                addDebugLog(`Request failed: ${error.message}`);
-                throw error;
-            }
-        }
-
+        // Database functions using Supabase SDK
         async function createNoteInDatabase() {
             setStatus('saving', 'Creating...');
             setSaveButtonState('saving');
             
+            if (!supabaseClient) {
+                addDebugLog('No Supabase client available');
+                setStatus('local', 'Local only');
+                setSaveButtonState('error');
+                return;
+            }
+            
             try {
-                await makeSupabaseRequest('notes', {
-                    method: 'POST',
-                    headers: {
-                        'Prefer': 'return=minimal'
-                    },
-                    body: JSON.stringify({
+                addDebugLog('Creating note with Supabase SDK...');
+                
+                const { data, error } = await supabaseClient
+                    .from('notes')
+                    .insert([{
                         id: currentNoteId,
                         content: '',
                         color: '#feff9c'
-                    })
-                });
+                    }])
+                    .select();
 
-                addDebugLog('Note created successfully');
+                if (error) {
+                    addDebugLog(`Supabase error: ${error.message}`);
+                    throw error;
+                }
+
+                addDebugLog('Note created successfully with SDK');
                 setStatus('synced', 'Created');
                 setSaveButtonState('success');
                 lastKnownContent = '';
@@ -674,23 +659,42 @@
         async function loadNoteFromDatabase() {
             setStatus('saving', 'Loading...');
             
+            if (!supabaseClient) {
+                addDebugLog('No Supabase client available');
+                setStatus('local', 'Local only');
+                loadFromLocal();
+                return;
+            }
+            
             try {
-                const data = await makeSupabaseRequest(`notes?id=eq.${currentNoteId}&select=*`);
+                addDebugLog('Loading note with Supabase SDK...');
                 
-                if (data && data.length > 0) {
-                    const noteData = data[0];
+                const { data, error } = await supabaseClient
+                    .from('notes')
+                    .select('*')
+                    .eq('id', currentNoteId)
+                    .single();
+
+                if (error) {
+                    if (error.code === 'PGRST116') {
+                        addDebugLog('Note not found, creating new one');
+                        await createNoteInDatabase();
+                        return;
+                    }
+                    addDebugLog(`Supabase error: ${error.message}`);
+                    throw error;
+                }
+
+                if (data) {
                     isUpdatingFromRemote = true;
-                    noteTextarea.value = noteData.content || '';
-                    setNoteColor(noteData.color || '#feff9c');
-                    lastKnownContent = noteData.content || '';
-                    lastKnownColor = noteData.color || '#feff9c';
+                    noteTextarea.value = data.content || '';
+                    setNoteColor(data.color || '#feff9c');
+                    lastKnownContent = data.content || '';
+                    lastKnownColor = data.color || '#feff9c';
                     isUpdatingFromRemote = false;
                     setStatus('synced', 'Loaded');
-                    addDebugLog('Note loaded from database');
+                    addDebugLog('Note loaded from database with SDK');
                     hasUnsavedChanges = false;
-                } else {
-                    addDebugLog('Note not found, creating new one');
-                    await createNoteInDatabase();
                 }
             } catch (error) {
                 addDebugLog(`Load failed: ${error.message}`);
@@ -705,17 +709,32 @@
             setStatus('saving', 'Saving...');
             setSaveButtonState('saving');
             
+            if (!supabaseClient) {
+                addDebugLog('No Supabase client available');
+                setStatus('local', 'Local only');
+                setSaveButtonState('error');
+                saveToLocal();
+                return;
+            }
+            
             try {
-                await makeSupabaseRequest(`notes?id=eq.${currentNoteId}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({
+                addDebugLog('Saving note with Supabase SDK...');
+                
+                const { error } = await supabaseClient
+                    .from('notes')
+                    .upsert({
+                        id: currentNoteId,
                         content: noteTextarea.value,
                         color: getActiveColor(),
                         updated_at: new Date().toISOString()
-                    })
-                });
+                    });
 
-                addDebugLog('Note saved to database');
+                if (error) {
+                    addDebugLog(`Supabase error: ${error.message}`);
+                    throw error;
+                }
+
+                addDebugLog('Note saved to database with SDK');
                 setStatus('synced', 'Saved');
                 setSaveButtonState('success');
                 lastKnownContent = noteTextarea.value;
@@ -731,21 +750,25 @@
         }
 
         async function checkForUpdates() {
-            if (isUpdatingFromRemote || !currentNoteId) return;
+            if (isUpdatingFromRemote || !currentNoteId || !supabaseClient) return;
             
             try {
-                const data = await makeSupabaseRequest(`notes?id=eq.${currentNoteId}&select=content,color,updated_at`);
+                const { data, error } = await supabaseClient
+                    .from('notes')
+                    .select('content,color,updated_at')
+                    .eq('id', currentNoteId)
+                    .single();
+
+                if (error) return; // Ignore errors during polling
                 
-                if (data && data.length > 0) {
-                    const noteData = data[0];
-                    
+                if (data) {
                     // Check if content has changed
-                    if (noteData.content !== lastKnownContent || noteData.color !== lastKnownColor) {
+                    if (data.content !== lastKnownContent || data.color !== lastKnownColor) {
                         isUpdatingFromRemote = true;
-                        noteTextarea.value = noteData.content || '';
-                        setNoteColor(noteData.color || '#feff9c');
-                        lastKnownContent = noteData.content || '';
-                        lastKnownColor = noteData.color || '#feff9c';
+                        noteTextarea.value = data.content || '';
+                        setNoteColor(data.color || '#feff9c');
+                        lastKnownContent = data.content || '';
+                        lastKnownColor = data.color || '#feff9c';
                         isUpdatingFromRemote = false;
                         hasUnsavedChanges = false;
                         
@@ -756,7 +779,6 @@
                 }
             } catch (error) {
                 // Ignore sync errors during polling
-                // addDebugLog(`Sync check failed: ${error.message}`);
             }
         }
 
