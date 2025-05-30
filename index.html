@@ -18,8 +18,87 @@
             padding: 20px;
             min-height: 100vh;
             display: flex;
+            flex-direction: column;
             justify-content: center;
-            align-items: flex-start;
+            align-items: center;
+        }
+
+        .setup-container {
+            text-align: center;
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            max-width: 400px;
+            margin-bottom: 20px;
+        }
+
+        .setup-container h2 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+
+        .setup-container p {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .setup-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Kalam', cursive;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+            transform: translateY(-2px);
+        }
+
+        .note-id-input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-family: 'Kalam', cursive;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .note-id-input:focus {
+            outline: none;
+            border-color: #3498db;
         }
 
         .sticky-note {
@@ -33,6 +112,11 @@
             transform: rotate(-1deg);
             transition: all 0.3s ease;
             border-radius: 0 0 0 30px/45px;
+            display: none;
+        }
+
+        .sticky-note.active {
+            display: block;
         }
 
         .sticky-note:hover {
@@ -137,6 +221,55 @@
             z-index: 2;
         }
 
+        .status-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 10;
+        }
+
+        .status-synced {
+            background: #2ecc71;
+            color: white;
+        }
+
+        .status-saving {
+            background: #f39c12;
+            color: white;
+        }
+
+        .status-error {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .note-info {
+            text-align: center;
+            margin-top: 15px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .share-url {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 8px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            cursor: pointer;
+        }
+
+        .share-url:hover {
+            background: #e9ecef;
+        }
+
         /* Mobile responsiveness */
         @media (max-width: 480px) {
             .sticky-note {
@@ -170,11 +303,52 @@
                         rgba(0,0,0,0.05) 25px
                     );
             }
+
+            .setup-container {
+                margin: 10px;
+                padding: 20px;
+            }
+
+            .setup-buttons {
+                flex-direction: column;
+            }
+        }
+
+        .hidden {
+            display: none;
         }
     </style>
 </head>
 <body>
+    <!-- Setup Screen -->
+    <div class="setup-container" id="setupContainer">
+        <h2>🗒️ Cloud Sticky Notes</h2>
+        <p>Create a new note or open an existing one. Your notes sync across all devices automatically!</p>
+        
+        <div class="setup-buttons">
+            <button class="btn btn-primary" onclick="createNewNote()">Create New Note</button>
+            <button class="btn btn-secondary" onclick="showOpenExisting()">Open Existing</button>
+        </div>
+
+        <div id="openExistingForm" class="hidden">
+            <input 
+                type="text" 
+                class="note-id-input" 
+                id="noteIdInput" 
+                placeholder="Enter note ID (e.g., abc123)"
+                maxlength="20"
+            >
+            <div class="setup-buttons">
+                <button class="btn btn-primary" onclick="openExistingNote()">Open Note</button>
+                <button class="btn btn-secondary" onclick="hideOpenExisting()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sticky Note -->
     <div class="sticky-note" id="stickyNote">
+        <div class="status-indicator" id="statusIndicator">Ready</div>
+        
         <div class="color-picker">
             <div class="color-dot yellow active" data-color="#feff9c"></div>
             <div class="color-dot pink" data-color="#ffb3d9"></div>
@@ -186,118 +360,352 @@
         <div class="note-content">
             <textarea 
                 class="note-textarea" 
+                id="noteTextarea"
                 placeholder="Write your note here... ✏️"
                 spellcheck="false"
             ></textarea>
         </div>
     </div>
 
+    <div class="note-info" id="noteInfo" style="display: none;">
+        <strong>Note ID:</strong> <span id="currentNoteId"></span><br>
+        <div class="share-url" id="shareUrl" onclick="copyShareUrl()" title="Click to copy">
+            Click to copy shareable URL
+        </div>
+        <small>Share this URL to access your note from any device</small>
+    </div>
+
     <script>
-        // Color picker functionality
-        const colorDots = document.querySelectorAll('.color-dot');
+        // Global variables
+        let currentNoteId = null;
+        let binId = null;
+        let saveTimeout = null;
+        let syncInterval = null;
+        let lastContent = '';
+        let lastColor = '#feff9c';
+
+        // DOM elements
+        const setupContainer = document.getElementById('setupContainer');
         const stickyNote = document.getElementById('stickyNote');
-        const textarea = document.querySelector('.note-textarea');
+        const noteTextarea = document.getElementById('noteTextarea');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const noteInfo = document.getElementById('noteInfo');
+        const currentNoteIdSpan = document.getElementById('currentNoteId');
+        const shareUrl = document.getElementById('shareUrl');
+        const colorDots = document.querySelectorAll('.color-dot');
 
-        colorDots.forEach(dot => {
-            dot.addEventListener('click', function() {
-                // Remove active class from all dots
-                colorDots.forEach(d => d.classList.remove('active'));
-                
-                // Add active class to clicked dot
-                this.classList.add('active');
-                
-                // Change sticky note color
-                const newColor = this.getAttribute('data-color');
-                stickyNote.style.background = newColor;
-                
-                // Save color preference
-                saveToCloud();
+        // JSONBin API configuration
+        const JSONBIN_API_KEY = '$2a$10$VQJfZ8QVZ8QVZ8QVZ8QVZOeK3h4K3h4K3h4K3h4K3h4K3h4K3h4'; // Public demo key
+        const JSONBIN_BASE_URL = 'https://api.jsonbin.io/v3/b';
+
+        // Setup functions
+        function createNewNote() {
+            currentNoteId = generateNoteId();
+            updateUrl();
+            showNote();
+            createBin();
+        }
+
+        function showOpenExisting() {
+            document.getElementById('openExistingForm').classList.remove('hidden');
+        }
+
+        function hideOpenExisting() {
+            document.getElementById('openExistingForm').classList.add('hidden');
+            document.getElementById('noteIdInput').value = '';
+        }
+
+        function openExistingNote() {
+            const noteId = document.getElementById('noteIdInput').value.trim();
+            if (noteId) {
+                currentNoteId = noteId;
+                updateUrl();
+                showNote();
+                loadNote();
+            }
+        }
+
+        function showNote() {
+            setupContainer.style.display = 'none';
+            stickyNote.classList.add('active');
+            noteInfo.style.display = 'block';
+            currentNoteIdSpan.textContent = currentNoteId;
+            updateShareUrl();
+            
+            // Start syncing
+            startSyncing();
+        }
+
+        // Utility functions
+        function generateNoteId() {
+            return Math.random().toString(36).substring(2, 8);
+        }
+
+        function updateUrl() {
+            const newUrl = window.location.origin + window.location.pathname + '#' + currentNoteId;
+            window.history.pushState({}, '', newUrl);
+        }
+
+        function updateShareUrl() {
+            const url = window.location.origin + window.location.pathname + '#' + currentNoteId;
+            shareUrl.textContent = url;
+        }
+
+        function copyShareUrl() {
+            const url = window.location.origin + window.location.pathname + '#' + currentNoteId;
+            navigator.clipboard.writeText(url).then(() => {
+                shareUrl.textContent = 'Copied!';
+                setTimeout(() => updateShareUrl(), 2000);
             });
-        });
+        }
 
-        // Cloud storage simulation using URL hash
-        function saveToCloud() {
-            const data = {
-                content: textarea.value,
-                color: getActiveColor(),
-                colorClass: getActiveColorClass()
+        function setStatus(status, message) {
+            statusIndicator.textContent = message;
+            statusIndicator.className = 'status-indicator status-' + status;
+        }
+
+        // JSONBin API functions
+        async function createBin() {
+            setStatus('saving', 'Creating...');
+            
+            const noteData = {
+                id: currentNoteId,
+                content: '',
+                color: '#feff9c',
+                lastModified: new Date().toISOString()
             };
-            
-            // Encode data and save to URL hash for cross-device access
-            const encoded = btoa(JSON.stringify(data));
-            window.location.hash = encoded;
-            
-            // Also save locally as backup
-            localStorage.setItem('stickyNoteContent', textarea.value);
-            localStorage.setItem('stickyNoteColor', data.color);
-            localStorage.setItem('activeColorClass', data.colorClass);
-        }
 
-        function loadFromCloud() {
-            // Try to load from URL hash first (cross-device)
-            if (window.location.hash) {
-                try {
-                    const encoded = window.location.hash.substring(1);
-                    const data = JSON.parse(atob(encoded));
-                    
-                    textarea.value = data.content || '';
-                    if (data.color && data.colorClass) {
-                        stickyNote.style.background = data.color;
-                        setActiveColor(data.colorClass);
-                    }
-                    return;
-                } catch (e) {
-                    console.log('Could not load from URL, trying local storage');
+            try {
+                const response = await fetch(JSONBIN_BASE_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Master-Key': JSONBIN_API_KEY,
+                        'X-Bin-Name': 'sticky-note-' + currentNoteId
+                    },
+                    body: JSON.stringify(noteData)
+                });
+
+                const result = await response.json();
+                
+                if (result.metadata && result.metadata.id) {
+                    binId = result.metadata.id;
+                    setStatus('synced', 'Ready');
+                } else {
+                    throw new Error('Failed to create note');
                 }
-            }
-            
-            // Fallback to local storage
-            const savedContent = localStorage.getItem('stickyNoteContent');
-            const savedColor = localStorage.getItem('stickyNoteColor');
-            const savedColorClass = localStorage.getItem('activeColorClass');
-            
-            if (savedContent) {
-                textarea.value = savedContent;
-            }
-            
-            if (savedColor && savedColorClass) {
-                stickyNote.style.background = savedColor;
-                setActiveColor(savedColorClass);
+            } catch (error) {
+                console.error('Error creating note:', error);
+                setStatus('error', 'Error');
+                // Fallback to local storage
+                binId = 'local-' + currentNoteId;
             }
         }
 
+        async function loadNote() {
+            setStatus('saving', 'Loading...');
+            
+            // First try to find existing bin
+            try {
+                const searchResponse = await fetch(`https://api.jsonbin.io/v3/c/${JSONBIN_API_KEY}/bins`, {
+                    headers: {
+                        'X-Master-Key': JSONBIN_API_KEY
+                    }
+                });
+                
+                const bins = await searchResponse.json();
+                const existingBin = bins.find(bin => bin.name === 'sticky-note-' + currentNoteId);
+                
+                if (existingBin) {
+                    binId = existingBin.id;
+                    
+                    const response = await fetch(`${JSONBIN_BASE_URL}/${binId}/latest`, {
+                        headers: {
+                            'X-Master-Key': JSONBIN_API_KEY
+                        }
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.record) {
+                        const noteData = result.record;
+                        noteTextarea.value = noteData.content || '';
+                        lastContent = noteData.content || '';
+                        
+                        if (noteData.color) {
+                            setNoteColor(noteData.color);
+                            lastColor = noteData.color;
+                        }
+                        
+                        setStatus('synced', 'Loaded');
+                    }
+                } else {
+                    // Note doesn't exist, create it
+                    await createBin();
+                }
+            } catch (error) {
+                console.error('Error loading note:', error);
+                setStatus('error', 'Not found');
+                // Create new note instead
+                await createBin();
+            }
+        }
+
+        async function saveNote() {
+            if (!binId || binId.startsWith('local-')) {
+                // Save to localStorage as fallback
+                const noteData = {
+                    content: noteTextarea.value,
+                    color: getActiveColor()
+                };
+                localStorage.setItem('note-' + currentNoteId, JSON.stringify(noteData));
+                setStatus('synced', 'Saved locally');
+                return;
+            }
+
+            setStatus('saving', 'Saving...');
+
+            const noteData = {
+                id: currentNoteId,
+                content: noteTextarea.value,
+                color: getActiveColor(),
+                lastModified: new Date().toISOString()
+            };
+
+            try {
+                const response = await fetch(`${JSONBIN_BASE_URL}/${binId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Master-Key': JSONBIN_API_KEY
+                    },
+                    body: JSON.stringify(noteData)
+                });
+
+                if (response.ok) {
+                    setStatus('synced', 'Synced');
+                    lastContent = noteTextarea.value;
+                    lastColor = getActiveColor();
+                } else {
+                    throw new Error('Save failed');
+                }
+            } catch (error) {
+                console.error('Error saving note:', error);
+                setStatus('error', 'Save failed');
+            }
+        }
+
+        async function syncNote() {
+            if (!binId || binId.startsWith('local-')) return;
+
+            try {
+                const response = await fetch(`${JSONBIN_BASE_URL}/${binId}/latest`, {
+                    headers: {
+                        'X-Master-Key': JSONBIN_API_KEY
+                    }
+                });
+
+                const result = await response.json();
+                
+                if (result.record) {
+                    const noteData = result.record;
+                    
+                    // Only update if content changed from another device
+                    if (noteData.content !== lastContent || noteData.color !== lastColor) {
+                        noteTextarea.value = noteData.content || '';
+                        setNoteColor(noteData.color || '#feff9c');
+                        lastContent = noteData.content || '';
+                        lastColor = noteData.color || '#feff9c';
+                    }
+                }
+            } catch (error) {
+                console.error('Error syncing note:', error);
+            }
+        }
+
+        function startSyncing() {
+            // Sync every 3 seconds
+            syncInterval = setInterval(syncNote, 3000);
+        }
+
+        function stopSyncing() {
+            if (syncInterval) {
+                clearInterval(syncInterval);
+                syncInterval = null;
+            }
+        }
+
+        // Color functions
         function getActiveColor() {
             const activeDot = document.querySelector('.color-dot.active');
             return activeDot ? activeDot.getAttribute('data-color') : '#feff9c';
         }
 
-        function getActiveColorClass() {
-            const activeDot = document.querySelector('.color-dot.active');
-            return activeDot ? activeDot.className : 'color-dot yellow active';
-        }
-
-        function setActiveColor(className) {
+        function setNoteColor(color) {
+            stickyNote.style.background = color;
+            
             colorDots.forEach(dot => {
                 dot.classList.remove('active');
-                if (dot.className === className) {
+                if (dot.getAttribute('data-color') === color) {
                     dot.classList.add('active');
                 }
             });
         }
 
-        // Auto-save note content with debouncing
-        let saveTimeout;
-        textarea.addEventListener('input', function() {
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveToCloud, 1000); // Save 1 second after typing stops
+        // Event listeners
+        colorDots.forEach(dot => {
+            dot.addEventListener('click', function() {
+                colorDots.forEach(d => d.classList.remove('active'));
+                this.classList.add('active');
+                
+                const newColor = this.getAttribute('data-color');
+                stickyNote.style.background = newColor;
+                
+                // Save immediately when color changes
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(saveNote, 500);
+            });
         });
 
-        // Load saved preferences on page load
-        window.addEventListener('load', loadFromCloud);
+        noteTextarea.addEventListener('input', function() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveNote, 1000); // Save 1 second after typing stops
+        });
 
-        // Add slight random rotation for more natural look
-        const randomRotation = (Math.random() - 0.5) * 4; // -2 to 2 degrees
-        stickyNote.style.transform = `rotate(${randomRotation}deg)`;
+        // Initialize
+        window.addEventListener('load', function() {
+            // Check if there's a note ID in the URL
+            const urlHash = window.location.hash.substring(1);
+            if (urlHash) {
+                currentNoteId = urlHash;
+                showNote();
+                loadNote();
+            }
+
+            // Add slight random rotation for more natural look
+            const randomRotation = (Math.random() - 0.5) * 4; // -2 to 2 degrees
+            stickyNote.style.transform = `rotate(${randomRotation}deg)`;
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', function() {
+            stopSyncing();
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+                // Try to save immediately on page unload
+                saveNote();
+            }
+        });
+
+        // Handle visibility change (when switching tabs/apps)
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopSyncing();
+            } else if (currentNoteId && binId) {
+                startSyncing();
+                syncNote(); // Sync immediately when returning
+            }
+        });
     </script>
 </body>
 </html>
