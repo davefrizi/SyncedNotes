@@ -252,9 +252,63 @@
             color: white;
         }
 
+        .status-ready {
+            background: #34495e;
+            color: white;
+        }
+
+        .save-button {
+            position: absolute;
+            bottom: -20px;
+            right: -20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            background: #3498db;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+            transition: all 0.3s ease;
+            z-index: 15;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .save-button:hover {
+            background: #2980b9;
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(52, 152, 219, 0.6);
+        }
+
+        .save-button:active {
+            transform: scale(0.95);
+        }
+
+        .save-button.saving {
+            background: #f39c12;
+            animation: pulse 1s infinite;
+        }
+
+        .save-button.success {
+            background: #2ecc71;
+        }
+
+        .save-button.error {
+            background: #e74c3c;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
         .note-info {
             text-align: center;
-            margin-top: 15px;
+            margin-top: 25px;
             color: #666;
             font-size: 14px;
         }
@@ -276,13 +330,26 @@
         }
 
         .sync-notice {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
             border-radius: 5px;
             padding: 10px;
             margin: 10px 0;
             font-size: 12px;
-            color: #856404;
+            color: #155724;
+        }
+
+        .debug-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 11px;
+            font-family: monospace;
+            text-align: left;
+            max-height: 150px;
+            overflow-y: auto;
         }
 
         /* Mobile responsiveness */
@@ -306,6 +373,12 @@
             .color-dot {
                 width: 18px;
                 height: 18px;
+            }
+
+            .save-button {
+                width: 45px;
+                height: 45px;
+                font-size: 16px;
             }
 
             /* Adjust lines for mobile */
@@ -338,7 +411,7 @@
     <!-- Setup Screen -->
     <div class="setup-container" id="setupContainer">
         <h2>🗒️ Cross-Device Sticky Notes</h2>
-        <p>Create a new note or open an existing one. Notes sync automatically using a simple polling system!</p>
+        <p>Create a new note or open an existing one. Notes sync across devices when you hit the save button!</p>
         
         <div class="setup-buttons">
             <button class="btn btn-primary" onclick="createNewNote()">Create New Note</button>
@@ -376,10 +449,14 @@
             <textarea 
                 class="note-textarea" 
                 id="noteTextarea"
-                placeholder="Write your note here... ✏️"
+                placeholder="Write your note here... ✏️ (Click the save button to sync across devices)"
                 spellcheck="false"
             ></textarea>
         </div>
+
+        <button class="save-button" id="saveButton" onclick="manualSave()" title="Save to cloud">
+            💾
+        </button>
     </div>
 
     <div class="note-info" id="noteInfo" style="display: none;">
@@ -388,10 +465,14 @@
             Click to copy shareable URL
         </div>
         <div class="sync-notice">
-            <strong>🔄 Sync Method:</strong> This note syncs across devices using periodic database checks. 
-            Changes will appear on other devices within a few seconds.
+            <strong>🔄 How it works:</strong> Your note saves locally as you type. Click the 💾 button to sync with the cloud and share across devices!
         </div>
         <small>Share this URL to collaborate across devices</small>
+        
+        <div class="debug-info" id="debugInfo">
+            <strong>Debug Log:</strong><br>
+            <div id="debugLog">Starting up...</div>
+        </div>
     </div>
 
     <script>
@@ -401,27 +482,38 @@
 
         // Global variables
         let currentNoteId = null;
-        let saveTimeout = null;
         let syncInterval = null;
         let isUpdatingFromRemote = false;
         let lastKnownContent = '';
         let lastKnownColor = '#feff9c';
+        let hasUnsavedChanges = false;
 
         // DOM elements
         const setupContainer = document.getElementById('setupContainer');
         const stickyNote = document.getElementById('stickyNote');
         const noteTextarea = document.getElementById('noteTextarea');
         const statusIndicator = document.getElementById('statusIndicator');
+        const saveButton = document.getElementById('saveButton');
         const noteInfo = document.getElementById('noteInfo');
         const currentNoteIdSpan = document.getElementById('currentNoteId');
         const shareUrl = document.getElementById('shareUrl');
+        const debugLog = document.getElementById('debugLog');
         const colorDots = document.querySelectorAll('.color-dot');
+
+        // Debug logging
+        function addDebugLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugLog.innerHTML += `<br>[${timestamp}] ${message}`;
+            debugLog.scrollTop = debugLog.scrollHeight;
+            console.log(`[DEBUG] ${message}`);
+        }
 
         // Setup functions
         function createNewNote() {
             currentNoteId = generateNoteId();
             updateUrl();
             showNote();
+            addDebugLog(`Created new note: ${currentNoteId}`);
             createNoteInDatabase();
         }
 
@@ -440,6 +532,7 @@
                 currentNoteId = noteId;
                 updateUrl();
                 showNote();
+                addDebugLog(`Opening existing note: ${currentNoteId}`);
                 loadNoteFromDatabase();
             }
         }
@@ -450,6 +543,9 @@
             noteInfo.style.display = 'block';
             currentNoteIdSpan.textContent = currentNoteId;
             updateShareUrl();
+            
+            // Load from local storage first
+            loadFromLocal();
             
             // Start simple polling sync
             startPollingSync();
@@ -483,17 +579,75 @@
             statusIndicator.className = 'status-indicator status-' + status;
         }
 
-        // Simple database functions using fetch API
-        async function createNoteInDatabase() {
-            setStatus('saving', 'Creating...');
+        function setSaveButtonState(state) {
+            saveButton.className = 'save-button ' + state;
+            if (state === 'saving') {
+                saveButton.innerHTML = '⏳';
+            } else if (state === 'success') {
+                saveButton.innerHTML = '✅';
+                setTimeout(() => {
+                    saveButton.className = 'save-button';
+                    saveButton.innerHTML = '💾';
+                }, 2000);
+            } else if (state === 'error') {
+                saveButton.innerHTML = '❌';
+                setTimeout(() => {
+                    saveButton.className = 'save-button';
+                    saveButton.innerHTML = '💾';
+                }, 3000);
+            } else {
+                saveButton.innerHTML = '💾';
+            }
+        }
+
+        // Database functions with better error handling
+        async function makeSupabaseRequest(endpoint, options = {}) {
+            const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
+            const headers = {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+
+            addDebugLog(`Making request to: ${endpoint}`);
             
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes`, {
+                const response = await fetch(url, {
+                    ...options,
+                    headers,
+                    mode: 'cors' // Explicitly set CORS mode
+                });
+
+                addDebugLog(`Response status: ${response.status}`);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    addDebugLog(`Error response: ${errorText}`);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                if (response.status === 204) {
+                    return null; // No content
+                }
+
+                const data = await response.json();
+                addDebugLog(`Response data: ${JSON.stringify(data).substring(0, 100)}...`);
+                return data;
+            } catch (error) {
+                addDebugLog(`Request failed: ${error.message}`);
+                throw error;
+            }
+        }
+
+        async function createNoteInDatabase() {
+            setStatus('saving', 'Creating...');
+            setSaveButtonState('saving');
+            
+            try {
+                await makeSupabaseRequest('notes', {
                     method: 'POST',
                     headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
                         'Prefer': 'return=minimal'
                     },
                     body: JSON.stringify({
@@ -503,18 +657,17 @@
                     })
                 });
 
-                if (response.ok) {
-                    setStatus('synced', 'Created');
-                    lastKnownContent = '';
-                    lastKnownColor = '#feff9c';
-                } else {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                addDebugLog('Note created successfully');
+                setStatus('synced', 'Created');
+                setSaveButtonState('success');
+                lastKnownContent = '';
+                lastKnownColor = '#feff9c';
+                hasUnsavedChanges = false;
             } catch (error) {
-                console.error('Error creating note:', error);
+                addDebugLog(`Create failed: ${error.message}`);
                 setStatus('local', 'Local only');
-                // Save locally as fallback
-                saveToLocal();
+                setSaveButtonState('error');
+                saveToLocal(); // Fallback to local storage
             }
         }
 
@@ -522,18 +675,7 @@
             setStatus('saving', 'Loading...');
             
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}&select=*`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
+                const data = await makeSupabaseRequest(`notes?id=eq.${currentNoteId}&select=*`);
                 
                 if (data && data.length > 0) {
                     const noteData = data[0];
@@ -544,14 +686,16 @@
                     lastKnownColor = noteData.color || '#feff9c';
                     isUpdatingFromRemote = false;
                     setStatus('synced', 'Loaded');
+                    addDebugLog('Note loaded from database');
+                    hasUnsavedChanges = false;
                 } else {
-                    // Note doesn't exist, create it
+                    addDebugLog('Note not found, creating new one');
                     await createNoteInDatabase();
                 }
             } catch (error) {
-                console.error('Error loading note:', error);
+                addDebugLog(`Load failed: ${error.message}`);
                 setStatus('local', 'Local only');
-                loadFromLocal();
+                loadFromLocal(); // Fallback to local storage
             }
         }
 
@@ -559,15 +703,11 @@
             if (isUpdatingFromRemote) return;
             
             setStatus('saving', 'Saving...');
+            setSaveButtonState('saving');
             
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}`, {
+                await makeSupabaseRequest(`notes?id=eq.${currentNoteId}`, {
                     method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify({
                         content: noteTextarea.value,
                         color: getActiveColor(),
@@ -575,70 +715,72 @@
                     })
                 });
 
-                if (response.ok) {
-                    setStatus('synced', 'Saved');
-                    lastKnownContent = noteTextarea.value;
-                    lastKnownColor = getActiveColor();
-                } else {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                addDebugLog('Note saved to database');
+                setStatus('synced', 'Saved');
+                setSaveButtonState('success');
+                lastKnownContent = noteTextarea.value;
+                lastKnownColor = getActiveColor();
+                hasUnsavedChanges = false;
+                saveToLocal(); // Also save locally as backup
             } catch (error) {
-                console.error('Error saving note:', error);
+                addDebugLog(`Save failed: ${error.message}`);
                 setStatus('local', 'Local only');
-                saveToLocal();
+                setSaveButtonState('error');
+                saveToLocal(); // Fallback to local storage
             }
         }
 
         async function checkForUpdates() {
-            if (isUpdatingFromRemote) return;
+            if (isUpdatingFromRemote || !currentNoteId) return;
             
             try {
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/notes?id=eq.${currentNoteId}&select=content,color,updated_at`, {
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-                    }
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        const noteData = data[0];
+                const data = await makeSupabaseRequest(`notes?id=eq.${currentNoteId}&select=content,color,updated_at`);
+                
+                if (data && data.length > 0) {
+                    const noteData = data[0];
+                    
+                    // Check if content has changed
+                    if (noteData.content !== lastKnownContent || noteData.color !== lastKnownColor) {
+                        isUpdatingFromRemote = true;
+                        noteTextarea.value = noteData.content || '';
+                        setNoteColor(noteData.color || '#feff9c');
+                        lastKnownContent = noteData.content || '';
+                        lastKnownColor = noteData.color || '#feff9c';
+                        isUpdatingFromRemote = false;
+                        hasUnsavedChanges = false;
                         
-                        // Check if content has changed
-                        if (noteData.content !== lastKnownContent || noteData.color !== lastKnownColor) {
-                            isUpdatingFromRemote = true;
-                            noteTextarea.value = noteData.content || '';
-                            setNoteColor(noteData.color || '#feff9c');
-                            lastKnownContent = noteData.content || '';
-                            lastKnownColor = noteData.color || '#feff9c';
-                            isUpdatingFromRemote = false;
-                            
-                            // Show brief update indicator
-                            setStatus('synced', 'Updated');
-                            setTimeout(() => setStatus('synced', 'Synced'), 1000);
-                        }
+                        addDebugLog('Received update from another device');
+                        setStatus('synced', 'Updated');
+                        setTimeout(() => setStatus('synced', 'Synced'), 1500);
                     }
                 }
             } catch (error) {
-                // Ignore sync errors, just keep working locally
-                console.log('Sync check failed:', error);
+                // Ignore sync errors during polling
+                // addDebugLog(`Sync check failed: ${error.message}`);
             }
         }
 
         function startPollingSync() {
-            // Check for updates every 3 seconds
-            syncInterval = setInterval(checkForUpdates, 3000);
+            // Check for updates every 5 seconds
+            syncInterval = setInterval(checkForUpdates, 5000);
+            addDebugLog('Started polling for updates');
         }
 
         function stopPollingSync() {
             if (syncInterval) {
                 clearInterval(syncInterval);
                 syncInterval = null;
+                addDebugLog('Stopped polling');
             }
         }
 
-        // Local storage fallback
+        // Manual save function
+        async function manualSave() {
+            addDebugLog('Manual save triggered');
+            await saveNoteToDatabase();
+        }
+
+        // Local storage functions
         function saveToLocal() {
             const noteData = {
                 content: noteTextarea.value,
@@ -646,16 +788,20 @@
                 updated_at: new Date().toISOString()
             };
             localStorage.setItem('note-' + currentNoteId, JSON.stringify(noteData));
+            addDebugLog('Saved to local storage');
         }
 
         function loadFromLocal() {
             const saved = localStorage.getItem('note-' + currentNoteId);
             if (saved) {
-                const noteData = JSON.parse(saved);
-                noteTextarea.value = noteData.content || '';
-                setNoteColor(noteData.color || '#feff9c');
-                lastKnownContent = noteData.content || '';
-                lastKnownColor = noteData.color || '#feff9c';
+                try {
+                    const noteData = JSON.parse(saved);
+                    noteTextarea.value = noteData.content || '';
+                    setNoteColor(noteData.color || '#feff9c');
+                    addDebugLog('Loaded from local storage');
+                } catch (e) {
+                    addDebugLog('Error loading from local storage');
+                }
             }
         }
 
@@ -686,22 +832,22 @@
                 
                 const newColor = this.getAttribute('data-color');
                 stickyNote.style.background = newColor;
-                
-                // Save immediately when color changes
-                clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(saveNoteToDatabase, 500);
+                hasUnsavedChanges = true;
+                saveToLocal(); // Save locally immediately
+                addDebugLog('Color changed to: ' + newColor);
             });
         });
 
         noteTextarea.addEventListener('input', function() {
             if (isUpdatingFromRemote) return;
-            
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveNoteToDatabase, 1500); // Save 1.5 seconds after typing stops
+            hasUnsavedChanges = true;
+            saveToLocal(); // Save locally as user types
         });
 
         // Initialize
         window.addEventListener('load', function() {
+            addDebugLog('Application started');
+            
             // Check if there's a note ID in the URL
             const urlHash = window.location.hash.substring(1);
             if (urlHash) {
@@ -718,8 +864,7 @@
         // Handle page unload
         window.addEventListener('beforeunload', function() {
             stopPollingSync();
-            // Save immediately before leaving
-            if (currentNoteId && !isUpdatingFromRemote) {
+            if (currentNoteId && hasUnsavedChanges) {
                 saveToLocal();
             }
         });
