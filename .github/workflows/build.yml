@@ -1,0 +1,43 @@
+# Name of your workflow
+name: Build Electron App
+
+# This workflow runs on every push to the "main" branch.
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    # Use a matrix strategy to build on Windows, macOS, and Linux
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    # The type of runner that the job will run on
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 1. Checks-out your repository so the job can access your code
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      # 2. Set up the correct version of Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. Install all your app's dependencies
+      - name: Install dependencies
+        run: npm install
+
+      # 4. Run the build script from your package.json
+      - name: Build application
+        run: npm run build
+
+      # 5. Upload the finished installers as downloadable files ("artifacts")
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-build
+          path: dist/
