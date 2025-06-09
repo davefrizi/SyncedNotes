@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron electron/installer-main.js",
     "install-deps": "npm install electron",
-    "build": "electron-builder"
+    "build": "electron-builder --publish never"
   },
   "author": "SyncNote",
   "license": "MIT",
